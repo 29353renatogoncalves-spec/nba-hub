@@ -73,6 +73,33 @@ export default function Betting({
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [notification, setNotification] = useState(null);
 
+    // AI Prediction Modal State
+    const [aiModalOpen, setAiModalOpen] = useState(false);
+    const [selectedAiGame, setSelectedAiGame] = useState(null);
+    const [aiModalLoading, setAiModalLoading] = useState(false);
+    const [aiModalData, setAiModalData] = useState(null);
+
+    const openAiPredictionModal = async (game) => {
+        setSelectedAiGame(game);
+        setAiModalOpen(true);
+        setAiModalLoading(true);
+        setAiModalData(null);
+        try {
+            const endpoint = game.estado === 'concluido'
+                ? `/api/jogos/${game.id}/ai-recap`
+                : `/api/jogos/${game.id}/ai-prediction`;
+            const res = await fetch(endpoint);
+            const json = await res.json();
+            if (json.success && json.data) {
+                setAiModalData(json.data);
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setAiModalLoading(false);
+        }
+    };
+
     // Formatar data do jogo
     const formatGameDate = (dateStr) => {
         if (!dateStr) return '';
@@ -594,13 +621,25 @@ export default function Betting({
                                                 )}
                                             </div>
 
-                                            <Link
-                                                href={`/jogos/${g.id}`}
-                                                className="text-[11px] text-blue-400 hover:text-blue-300 font-bold flex items-center space-x-1"
-                                            >
-                                                <span>Box Score &amp; Replay</span>
-                                                <ArrowRight className="w-3 h-3" />
-                                            </Link>
+                                            <div className="flex items-center space-x-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openAiPredictionModal(g)}
+                                                    className="px-2.5 py-1 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 font-bold text-[11px] flex items-center space-x-1.5 transition transform hover:scale-105"
+                                                    title="Ver Previsão e Estatísticas com IA Gemini"
+                                                >
+                                                    <Sparkles className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
+                                                    <span>{isFinished ? 'Resumo AI' : 'Previsão AI'}</span>
+                                                </button>
+
+                                                <Link
+                                                    href={`/jogos/${g.id}`}
+                                                    className="text-[11px] text-blue-400 hover:text-blue-300 font-bold flex items-center space-x-1"
+                                                >
+                                                    <span>Box Score &amp; Replay</span>
+                                                    <ArrowRight className="w-3 h-3" />
+                                                </Link>
+                                            </div>
                                         </div>
 
                                         {/* Equipas & Placar */}
@@ -974,6 +1013,134 @@ export default function Betting({
                     </div>
                 )}
             </main>
+
+            {/* MODAL DE ANÁLISE & PREVISÃO AI GEMINI */}
+            {aiModalOpen && selectedAiGame && (
+                <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200">
+                        {/* Top Close Button */}
+                        <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
+                            <div className="flex items-center space-x-3">
+                                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center shadow-md shadow-purple-600/30">
+                                    <Sparkles className="w-5 h-5 text-white" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-black text-white flex items-center gap-2">
+                                        <span>{selectedAiGame.estado === 'concluido' ? 'Crónica & Resumo AI' : 'Prognóstico & Previsão AI'}</span>
+                                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                            Google Gemini
+                                        </span>
+                                    </h3>
+                                    <p className="text-xs text-slate-400">
+                                        {selectedAiGame.equipa_casa?.sigla} vs {selectedAiGame.equipa_fora?.sigla} • {formatGameDate(selectedAiGame.data_hora)}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => setAiModalOpen(false)}
+                                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {aiModalLoading && (
+                            <div className="py-12 text-center">
+                                <Sparkles className="w-8 h-8 text-purple-400 animate-spin mx-auto mb-3" />
+                                <p className="text-sm font-bold text-white">A consultar inteligência artificial Gemini...</p>
+                                <p className="text-xs text-slate-400 mt-1">A calcular métricas, matchups e probabilidades.</p>
+                            </div>
+                        )}
+
+                        {!aiModalLoading && aiModalData && (
+                            <div className="space-y-4">
+                                {selectedAiGame.estado !== 'concluido' ? (
+                                    <>
+                                        {/* Barra de Probabilidades */}
+                                        <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
+                                            <div className="flex items-center justify-between text-xs font-black uppercase mb-1.5">
+                                                <span className="text-blue-400">{selectedAiGame.equipa_casa?.sigla}: {aiModalData.probabilidade_casa}%</span>
+                                                <span className="text-red-400">{selectedAiGame.equipa_fora?.sigla}: {aiModalData.probabilidade_fora}%</span>
+                                            </div>
+                                            <div className="h-3 w-full bg-slate-900 rounded-full overflow-hidden flex p-0.5 border border-slate-800">
+                                                <div className="h-full bg-blue-500 rounded-l-full" style={{ width: `${aiModalData.probabilidade_casa}%` }} />
+                                                <div className="h-full bg-red-500 rounded-r-full" style={{ width: `${aiModalData.probabilidade_fora}%` }} />
+                                            </div>
+                                        </div>
+
+                                        {/* Vencedor e Placar */}
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="p-3.5 rounded-2xl bg-slate-950 border border-purple-500/30">
+                                                <span className="text-[10px] text-purple-400 uppercase font-black block">Vencedor Projetado</span>
+                                                <span className="text-base font-black text-white">{aiModalData.vencedor_previsto_nome}</span>
+                                                <span className="text-[10px] text-emerald-400 block font-bold mt-0.5">Confiança: {aiModalData.confianca}</span>
+                                            </div>
+                                            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                                                <span className="text-[10px] text-slate-400 uppercase font-black block">Placar Estimado</span>
+                                                <span className="text-base font-mono font-black text-emerald-400">{aiModalData.placar_previsto}</span>
+                                                <span className="text-[10px] text-slate-500 block mt-0.5">Média Projetada</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Resumo Rápido */}
+                                        <div className="p-3.5 rounded-2xl bg-purple-950/20 border border-purple-500/20 text-xs text-purple-200">
+                                            <p className="font-medium">{aiModalData.resumo_rapido}</p>
+                                        </div>
+
+                                        {/* Fatores Chave */}
+                                        {aiModalData.fatores_chave && (
+                                            <div className="space-y-1.5">
+                                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">Chaves para Apostas:</span>
+                                                {aiModalData.fatores_chave.map((f, i) => (
+                                                    <div key={i} className="text-xs text-slate-300 flex items-start space-x-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                                                        <span className="text-emerald-400 font-bold">✓</span>
+                                                        <span>{f}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <>
+                                        {/* Manchete & MVP para concluídos */}
+                                        <div className="bg-slate-950 p-4 rounded-2xl border border-cyan-500/30">
+                                            <span className="text-[10px] text-cyan-400 uppercase font-black block mb-1">Manchete Oficial</span>
+                                            <h4 className="text-base font-black text-white">"{aiModalData.manchete}"</h4>
+                                        </div>
+
+                                        {aiModalData.mvp && (
+                                            <div className="p-3.5 rounded-2xl bg-slate-950 border border-amber-500/30">
+                                                <span className="text-[10px] text-amber-400 uppercase font-black block">MVP da Partida</span>
+                                                <span className="text-sm font-black text-white">{aiModalData.mvp.nome} ({aiModalData.mvp.equipa})</span>
+                                                <span className="text-xs font-mono font-bold text-emerald-400 block">{aiModalData.mvp.linha_estatistica}</span>
+                                                <p className="text-xs text-slate-300 mt-1">{aiModalData.mvp.impacto}</p>
+                                            </div>
+                                        )}
+
+                                        {aiModalData.estatistica_decisiva && (
+                                            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300">
+                                                <span className="text-cyan-400 font-bold">Fator Decisivo: </span>
+                                                <span>{aiModalData.estatistica_decisiva}</span>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                <div className="pt-2 flex justify-end">
+                                    <Link
+                                        href={`/jogos/${selectedAiGame.id}`}
+                                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center space-x-1.5"
+                                    >
+                                        <span>Ver Análise Completa &amp; Boxscore</span>
+                                        <ArrowRight className="w-3.5 h-3.5" />
+                                    </Link>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

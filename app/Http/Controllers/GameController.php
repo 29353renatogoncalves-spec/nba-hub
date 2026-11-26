@@ -68,6 +68,9 @@ class GameController extends Controller
         $shots = $shotData['shots'];
         $replayPlays = $shotData['replayPlays'];
 
+        $isConcluded = in_array($game->estado, ['concluido', 'finalizado']) || (($game->pontos_casa ?? 0) > 0 && ($game->pontos_fora ?? 0) > 0);
+        $initialAiData = \Illuminate\Support\Facades\Cache::get($isConcluded ? "gemini_recap_game_{$game->id}" : "gemini_prediction_game_{$game->id}");
+
         return Inertia::render('GameShow', [
             'game' => $game,
             'homeStats' => $homeStats,
@@ -83,6 +86,7 @@ class GameController extends Controller
             'replayPlays' => $replayPlays,
             'isLive' => in_array($game->estado, ['em_direto', 'intervalo']),
             'lastSynced' => now()->format('H:i:s'),
+            'initialAiData' => $initialAiData,
         ]);
     }
 

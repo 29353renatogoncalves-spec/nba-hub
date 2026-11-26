@@ -19,6 +19,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        try {
+            \Illuminate\Support\Facades\DB::statement('SET SESSION sql_big_selects=1');
+        } catch (\Throwable $e) {
+            // Ignora se não houver conexão ativa
+        }
     }
 }

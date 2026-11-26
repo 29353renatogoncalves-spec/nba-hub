@@ -7,6 +7,7 @@ use App\Http\Controllers\GameController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\ArenaController;
 use App\Http\Controllers\BettingController;
+use App\Http\Controllers\AiAnalysisController;
 use App\Http\Controllers\UserFavoritesController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use Illuminate\Foundation\Application;
@@ -41,6 +42,10 @@ Route::post('/api/apostas', [BettingController::class, 'store'])->name('betting.
 Route::post('/api/apostas/bonus', [BettingController::class, 'claimDailyBonus'])->name('betting.bonus');
 Route::post('/api/apostas/reset', [BettingController::class, 'resetBonus'])->name('betting.reset');
 Route::post('/api/apostas/resolver', [BettingController::class, 'resolveBetsManually'])->name('betting.resolve');
+
+// IA Gemini: Previsão de Jogos e Resumos Pós-Jogo
+Route::get('/api/jogos/{id}/ai-prediction', [AiAnalysisController::class, 'predict'])->name('ai.prediction');
+Route::get('/api/jogos/{id}/ai-recap', [AiAnalysisController::class, 'recap'])->name('ai.recap');
 
 // Google Authentication (100% Oficial via Laravel Socialite)
 Route::get('/auth/google', [GoogleAuthController::class, 'redirectToGoogle'])->name('auth.google');

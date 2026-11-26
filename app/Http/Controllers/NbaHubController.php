@@ -14,6 +14,10 @@ class NbaHubController extends Controller
 {
     public function index(Request $request)
     {
+        try {
+            DB::statement('SET SESSION sql_big_selects=1');
+        } catch (\Throwable $e) {}
+
         // 0. Auto-sincronização transparente com a ESPN em background/cache throttle
         EspnSyncService::syncIfNeeded();
 
@@ -22,30 +26,44 @@ class NbaHubController extends Controller
         $defaultSeason = $seasons->where('atual', 1)->first() ?? $seasons->first();
         $selectedSeasonId = (int) $request->query('season_id', $defaultSeason ? $defaultSeason->id : 5);
 
-        // 2. Jogos Recentes Oficiais e Resultados com Quarters
-        $recentGames = DB::table('jogos')
-            ->join('equipas as ec', 'jogos.equipa_casa_id', '=', 'ec.id')
-            ->join('equipas as ef', 'jogos.equipa_fora_id', '=', 'ef.id')
-            ->join('arenas as a', 'jogos.arena_id', '=', 'a.id')
-            ->where('jogos.epoca_id', $selectedSeasonId)
-            ->select(
-                'jogos.id', 'jogos.data_hora', 'jogos.estado', 'jogos.periodo_atual', 'jogos.tempo_restante', 'jogos.canal_tv',
-                'jogos.pontos_casa', 'jogos.pontos_fora', 'jogos.destaque_hero',
-                'ec.nome_completo as casa_nome', 'ec.sigla as casa_sigla', 'ec.logo_url as casa_logo', 'ec.cor_primaria as casa_cor',
-                'ef.nome_completo as fora_nome', 'ef.sigla as fora_sigla', 'ef.logo_url as fora_logo', 'ef.cor_primaria as fora_cor',
-                'a.nome as arena_nome', 'a.cidade as arena_cidade'
-            )
+        // 2. Jogos Recentes Oficiais e Resultados com Quarters (Otimizado sem Joins pesados para compatibilidade total)
+        $allTeams = DB::table('equipas')->get()->keyBy('id');
+        $allArenas = DB::table('arenas')->get()->keyBy('id');
+
+        $gamesRaw = DB::table('jogos')
+            ->where('epoca_id', $selectedSeasonId)
             ->orderByRaw("
                 CASE 
-                    WHEN jogos.estado = 'em_direto' THEN 1 
-                    WHEN jogos.estado = 'intervalo' THEN 2 
-                    WHEN DATE(jogos.data_hora) = CURDATE() THEN 3 
-                    WHEN jogos.estado = 'concluido' THEN 4 
+                    WHEN estado = 'em_direto' THEN 1 
+                    WHEN estado = 'intervalo' THEN 2 
+                    WHEN DATE(data_hora) = CURDATE() THEN 3 
+                    WHEN estado = 'concluido' THEN 4 
                     ELSE 5 
                 END, 
-                jogos.data_hora DESC
+                data_hora DESC
             ")
             ->get();
+
+        $recentGames = $gamesRaw->map(function ($j) use ($allTeams, $allArenas) {
+            $casa = $allTeams->get($j->equipa_casa_id);
+            $fora = $allTeams->get($j->equipa_fora_id);
+            $arena = $allArenas->get($j->arena_id);
+
+            $j->casa_nome = $casa ? $casa->nome_completo : '';
+            $j->casa_sigla = $casa ? $casa->sigla : '';
+            $j->casa_logo = $casa ? $casa->logo_url : '';
+            $j->casa_cor = $casa ? $casa->cor_primaria : '#1d428a';
+
+            $j->fora_nome = $fora ? $fora->nome_completo : '';
+            $j->fora_sigla = $fora ? $fora->sigla : '';
+            $j->fora_logo = $fora ? $fora->logo_url : '';
+            $j->fora_cor = $fora ? $fora->cor_primaria : '#c8102e';
+
+            $j->arena_nome = $arena ? $arena->nome : '';
+            $j->arena_cidade = $arena ? $arena->cidade : '';
+
+            return $j;
+        });
 
         $gameIds = $recentGames->pluck('id');
         $periods = DB::table('jogos_periodos')
@@ -88,33 +106,9 @@ class NbaHubController extends Controller
             ];
         }
 
-        // 3. Classificações Oficiais da Época Selecionada (Este e Oeste)
-        $standingsEast = DB::table('vw_classificacao_nba')
-            ->where('epoca_id', $selectedSeasonId)
-            ->where('conferencia', 'Este')
-            ->orderBy('posicao', 'asc')
-            ->get();
-
-        // Fallback caso a época não tenha equipas ainda
-        if ($standingsEast->isEmpty()) {
-            $standingsEast = DB::table('vw_classificacao_nba')
-                ->where('conferencia', 'Este')
-                ->orderBy('posicao', 'asc')
-                ->get();
-        }
-
-        $standingsWest = DB::table('vw_classificacao_nba')
-            ->where('epoca_id', $selectedSeasonId)
-            ->where('conferencia', 'Oeste')
-            ->orderBy('posicao', 'asc')
-            ->get();
-
-        if ($standingsWest->isEmpty()) {
-            $standingsWest = DB::table('vw_classificacao_nba')
-                ->where('conferencia', 'Oeste')
-                ->orderBy('posicao', 'asc')
-                ->get();
-        }
+        // 3. Classificações Oficiais da Época Selecionada (Este e Oeste) com Fallback Direto
+        $standingsEast = $this->getStandings('Este', $selectedSeasonId);
+        $standingsWest = $this->getStandings('Oeste', $selectedSeasonId);
 
         // 4. As 30 Equipas com Arena e os Jogadores Reais pré-carregados para o Drawer
         $teams = Equipa::with(['jogadores', 'arena'])
@@ -303,6 +297,64 @@ class NbaHubController extends Controller
     }
 
     /**
+     * Obtém classificação diretamente da tabela oficial (compatível com InfinityFree sem views).
+     */
+    private function getStandings(string $conference, int $seasonId)
+    {
+        $teams = DB::table('equipas')->where('conferencia', $conference)->get()->keyBy('id');
+        $official = DB::table('classificacao_oficial')
+            ->where('epoca_id', $seasonId)
+            ->whereIn('equipa_id', $teams->keys())
+            ->get();
+
+        if ($official->isEmpty()) {
+            $official = DB::table('classificacao_oficial')
+                ->whereIn('equipa_id', $teams->keys())
+                ->get();
+        }
+
+        $list = $official->map(function ($c) use ($teams) {
+            $e = $teams->get($c->equipa_id);
+            $jogos = (int)$c->vitorias + (int)$c->derrotas;
+            $pct = $jogos > 0 ? round(($c->vitorias / $jogos) * 100, 1) : 0.0;
+            $saldo = (int)$c->pontos_marcados - (int)$c->pontos_sofridos;
+            $ppg = $jogos > 0 ? round($c->pontos_marcados / $jogos, 1) : 0.0;
+            $opp = $jogos > 0 ? round($c->pontos_sofridos / $jogos, 1) : 0.0;
+
+            return (object) [
+                'epoca_id' => $c->epoca_id,
+                'conferencia' => $e ? $e->conferencia : '',
+                'divisao' => $e ? $e->divisao : '',
+                'equipa_id' => $c->equipa_id,
+                'nome_completo' => $e ? $e->nome_completo : '',
+                'sigla' => $e ? $e->sigla : '',
+                'logo_url' => $e ? $e->logo_url : '',
+                'cor_primaria' => $e ? $e->cor_primaria : '#1d428a',
+                'vitorias' => (int)$c->vitorias,
+                'derrotas' => (int)$c->derrotas,
+                'jogos' => $jogos,
+                'pct_vitorias' => $pct,
+                'casa' => "{$c->vitorias_casa}-{$c->derrotas_casa}",
+                'fora' => "{$c->vitorias_fora}-{$c->derrotas_fora}",
+                'pontos_marcados' => (int)$c->pontos_marcados,
+                'pontos_sofridos' => (int)$c->pontos_sofridos,
+                'saldo_pontos' => $saldo,
+                'ppg' => $ppg,
+                'opp_ppg' => $opp,
+                'ultimos_10' => $c->ultimos_10 ?: '0-0',
+                'sequencia_atual' => $c->sequencia_atual ?: '-',
+            ];
+        })->sortByDesc(function ($item) {
+            return ($item->pct_vitorias * 10000) + $item->saldo_pontos;
+        })->values();
+
+        return $list->map(function ($item, $idx) {
+            $item->posicao = $idx + 1;
+            return $item;
+        });
+    }
+
+    /**
      * Endpoint leve para auto-polling de resultados ao vivo e marcadores em tempo real.
      */
     public function liveScores(Request $request)
@@ -311,30 +363,44 @@ class NbaHubController extends Controller
 
         $selectedSeasonId = (int) $request->query('season_id', 5);
 
-        $games = DB::table('jogos')
-            ->join('equipas as ec', 'jogos.equipa_casa_id', '=', 'ec.id')
-            ->join('equipas as ef', 'jogos.equipa_fora_id', '=', 'ef.id')
-            ->join('arenas as a', 'jogos.arena_id', '=', 'a.id')
-            ->where('jogos.epoca_id', $selectedSeasonId)
-            ->select(
-                'jogos.id', 'jogos.data_hora', 'jogos.estado', 'jogos.periodo_atual', 'jogos.tempo_restante', 'jogos.canal_tv',
-                'jogos.pontos_casa', 'jogos.pontos_fora', 'jogos.destaque_hero',
-                'ec.nome_completo as casa_nome', 'ec.sigla as casa_sigla', 'ec.logo_url as casa_logo', 'ec.cor_primaria as casa_cor',
-                'ef.nome_completo as fora_nome', 'ef.sigla as fora_sigla', 'ef.logo_url as fora_logo', 'ef.cor_primaria as fora_cor',
-                'a.nome as arena_nome', 'a.cidade as arena_cidade'
-            )
+        $allTeams = DB::table('equipas')->get()->keyBy('id');
+        $allArenas = DB::table('arenas')->get()->keyBy('id');
+
+        $gamesRaw = DB::table('jogos')
+            ->where('epoca_id', $selectedSeasonId)
             ->orderByRaw("
                 CASE 
-                    WHEN jogos.estado = 'em_direto' THEN 1 
-                    WHEN jogos.estado = 'intervalo' THEN 2 
-                    WHEN DATE(jogos.data_hora) = CURDATE() THEN 3 
-                    WHEN jogos.estado = 'concluido' THEN 4 
+                    WHEN estado = 'em_direto' THEN 1 
+                    WHEN estado = 'intervalo' THEN 2 
+                    WHEN DATE(data_hora) = CURDATE() THEN 3 
+                    WHEN estado = 'concluido' THEN 4 
                     ELSE 5 
                 END, 
-                jogos.data_hora DESC
+                data_hora DESC
             ")
             ->take(50)
             ->get();
+
+        $games = $gamesRaw->map(function ($j) use ($allTeams, $allArenas) {
+            $casa = $allTeams->get($j->equipa_casa_id);
+            $fora = $allTeams->get($j->equipa_fora_id);
+            $arena = $allArenas->get($j->arena_id);
+
+            $j->casa_nome = $casa ? $casa->nome_completo : '';
+            $j->casa_sigla = $casa ? $casa->sigla : '';
+            $j->casa_logo = $casa ? $casa->logo_url : '';
+            $j->casa_cor = $casa ? $casa->cor_primaria : '#1d428a';
+
+            $j->fora_nome = $fora ? $fora->nome_completo : '';
+            $j->fora_sigla = $fora ? $fora->sigla : '';
+            $j->fora_logo = $fora ? $fora->logo_url : '';
+            $j->fora_cor = $fora ? $fora->cor_primaria : '#c8102e';
+
+            $j->arena_nome = $arena ? $arena->nome : '';
+            $j->arena_cidade = $arena ? $arena->cidade : '';
+
+            return $j;
+        });
 
         $gameIds = $games->pluck('id');
         $periods = DB::table('jogos_periodos')

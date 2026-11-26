@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import Navbar from '@/Components/Navbar';
 import CourtShotChart from '@/Components/CourtShotChart';
 import CourtReplaySimulator from '@/Components/CourtReplaySimulator';
-import { ArrowLeft, Calendar, MapPin, Tv, Trophy, Users, Activity, BarChart2, ListOrdered, Clock, Flame, ShieldAlert, Target, Sparkles, Filter, Play } from 'lucide-react';
+import { ArrowLeft, Calendar, MapPin, Tv, Trophy, Users, Activity, BarChart2, ListOrdered, Clock, Flame, ShieldAlert, Target, Sparkles, Filter, Play, RotateCw, Award, TrendingUp, Zap, CheckCircle2, AlertCircle, Newspaper } from 'lucide-react';
 
 export default function GameShow({
     auth,
@@ -19,15 +19,48 @@ export default function GameShow({
     plays = [],
     shots = [],
     replayPlays = [],
+    initialAiData = null,
 }) {
-    const [viewMode, setViewMode] = useState('boxscore'); // 'boxscore' | 'shotchart' | 'replay' | 'playbyplay'
+    const isConcluded = game.estado === 'concluido';
+    const isLive = game.estado === 'em_direto';
+    const isScheduled = game.estado === 'agendado';
+
+    const [viewMode, setViewMode] = useState(isScheduled ? 'ai-prediction' : 'boxscore'); // 'boxscore' | 'shotchart' | 'replay' | 'playbyplay' | 'ai-prediction' | 'ai-recap'
     const [activeTeamTab, setActiveTeamTab] = useState('casa');
     const [pbpQuarter, setPbpQuarter] = useState('todos'); // 'todos', 1, 2, 3, 4, 5...
     const [pbpCategory, setPbpCategory] = useState('todas'); // 'todas', 'cesto', 'triplo', 'falta', 'perda'
 
-    const isConcluded = game.estado === 'concluido';
-    const isLive = game.estado === 'em_direto';
-    const isScheduled = game.estado === 'agendado';
+    // IA Gemini State
+    const [aiData, setAiData] = useState(initialAiData || null);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiError, setAiError] = useState(null);
+
+    const fetchAiData = async (force = false) => {
+        setAiLoading(true);
+        setAiError(null);
+        try {
+            const endpoint = isConcluded 
+                ? `/api/jogos/${game.id}/ai-recap${force ? '?refresh=1' : ''}`
+                : `/api/jogos/${game.id}/ai-prediction${force ? '?refresh=1' : ''}`;
+            const res = await fetch(endpoint);
+            const json = await res.json();
+            if (json.success && json.data) {
+                setAiData(json.data);
+            } else {
+                setAiError(json.message || 'Não foi possível carregar a análise da IA.');
+            }
+        } catch (err) {
+            setAiError('Erro de conexão com o servidor de IA.');
+        } finally {
+            setAiLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!aiData && (viewMode === 'ai-prediction' || viewMode === 'ai-recap')) {
+            fetchAiData(false);
+        }
+    }, [viewMode]);
 
     const casaVenceu = isConcluded && (game.pontos_casa ?? 0) > (game.pontos_fora ?? 0);
     const foraVenceu = isConcluded && (game.pontos_fora ?? 0) > (game.pontos_casa ?? 0);
@@ -468,6 +501,39 @@ export default function GameShow({
                                 </span>
                             )}
                         </button>
+
+                        {/* Aba Gemini IA: Previsão ou Resumo conforme o estado da partida */}
+                        {!isConcluded ? (
+                            <button
+                                onClick={() => setViewMode('ai-prediction')}
+                                className={`px-4 py-2.5 rounded-2xl font-black text-xs sm:text-sm flex items-center space-x-2 transition ${
+                                    viewMode === 'ai-prediction'
+                                        ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 text-white shadow-lg shadow-purple-900/40 ring-1 ring-purple-400/50'
+                                        : 'bg-slate-900 hover:bg-slate-850 text-purple-300 hover:text-white border border-purple-500/30'
+                                }`}
+                            >
+                                <Sparkles className="w-4 h-4 text-purple-300 animate-pulse" />
+                                <span>Previsão AI Gemini</span>
+                                <span className="ml-1 px-2 py-0.5 rounded-full bg-purple-500/20 text-[10px] font-black text-purple-200 border border-purple-500/30">
+                                    ✨ IA
+                                </span>
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => setViewMode('ai-recap')}
+                                className={`px-4 py-2.5 rounded-2xl font-black text-xs sm:text-sm flex items-center space-x-2 transition ${
+                                    viewMode === 'ai-recap'
+                                        ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-cyan-400/50'
+                                        : 'bg-slate-900 hover:bg-slate-850 text-cyan-300 hover:text-white border border-cyan-500/30'
+                                }`}
+                            >
+                                <Sparkles className="w-4 h-4 text-cyan-300 animate-pulse" />
+                                <span>Resumo AI do Jogo</span>
+                                <span className="ml-1 px-2 py-0.5 rounded-full bg-cyan-500/20 text-[10px] font-black text-cyan-200 border border-cyan-500/30">
+                                    📰 Crónica
+                                </span>
+                            </button>
+                        )}
                     </div>
 
                     <div className="text-xs text-slate-400 flex items-center gap-1.5">
@@ -876,6 +942,342 @@ export default function GameShow({
                                 <Activity className="w-8 h-8 text-slate-600 mx-auto mb-2 animate-pulse" />
                                 <p className="font-semibold text-white">Nenhum lance a lance encontrado para os filtros selecionados.</p>
                                 <p className="text-xs text-slate-500 mt-1">O Play-by-Play oficial é transmitido e atualizado em direto durante e após as partidas da ESPN.</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* VISÃO 5: PREVISÃO DE JOGO (IA GEMINI) */}
+                {viewMode === 'ai-prediction' && (
+                    <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 mb-12 relative overflow-hidden">
+                        {/* Glow de fundo */}
+                        <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-purple-600/10 blur-3xl pointer-events-none" />
+
+                        {/* Top Header com Botão de Regenerar */}
+                        <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-800 mb-6 relative z-10">
+                            <div className="flex items-center space-x-3">
+                                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-600/30 shrink-0">
+                                    <Sparkles className="w-5 h-5 text-white animate-pulse" />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-black text-white flex items-center gap-2">
+                                        <span>Análise Estatística &amp; Previsão AI</span>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                            Google Gemini
+                                        </span>
+                                    </h2>
+                                    <p className="text-xs text-slate-400">
+                                        Prognóstico tático baseado em aproveitamento, métricas da temporada e vantagem do recinto.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => fetchAiData(true)}
+                                disabled={aiLoading}
+                                className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 flex items-center space-x-2 transition disabled:opacity-50"
+                            >
+                                <RotateCw className={`w-3.5 h-3.5 text-purple-400 ${aiLoading ? 'animate-spin' : ''}`} />
+                                <span>{aiLoading ? 'A analisar partida...' : 'Regenerar Previsão'}</span>
+                            </button>
+                        </div>
+
+                        {/* Loading State */}
+                        {aiLoading && !aiData && (
+                            <div className="py-16 text-center">
+                                <Sparkles className="w-10 h-10 text-purple-400 animate-spin mx-auto mb-4" />
+                                <h3 className="text-base font-bold text-white">A processar dados com o Gemini AI...</h3>
+                                <p className="text-xs text-slate-400 mt-1">A calcular probabilidades, duelos táticos e projeção de placar.</p>
+                            </div>
+                        )}
+
+                        {/* Error State */}
+                        {aiError && !aiData && (
+                            <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/20 text-center">
+                                <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
+                                <p className="text-sm font-bold text-red-300">{aiError}</p>
+                                <button
+                                    onClick={() => fetchAiData(true)}
+                                    className="mt-4 px-4 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-xs font-bold text-red-200 border border-red-500/30"
+                                >
+                                    Tentar Novamente
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Content */}
+                        {aiData && (
+                            <div className="space-y-6 relative z-10">
+                                {/* 1. Barra de Probabilidade de Vitória */}
+                                <div className="bg-slate-950/80 rounded-2xl p-5 border border-slate-800">
+                                    <div className="flex items-center justify-between text-xs font-black uppercase tracking-wider mb-2">
+                                        <span className="flex items-center gap-2 text-white">
+                                            <span className="w-3 h-3 rounded-full bg-blue-500 inline-block" />
+                                            {game.equipa_casa?.nome_completo} ({game.equipa_casa?.sigla}): {aiData.probabilidade_casa}%
+                                        </span>
+                                        <span className="flex items-center gap-2 text-slate-400">
+                                            {game.equipa_fora?.nome_completo} ({game.equipa_fora?.sigla}): {aiData.probabilidade_fora}%
+                                            <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
+                                        </span>
+                                    </div>
+
+                                    <div className="h-4 w-full bg-slate-900 rounded-full overflow-hidden flex p-0.5 border border-slate-800">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-blue-600 to-indigo-500 rounded-l-full transition-all duration-1000"
+                                            style={{ width: `${aiData.probabilidade_casa}%` }}
+                                        />
+                                        <div
+                                            className="h-full bg-gradient-to-r from-rose-500 to-red-600 rounded-r-full transition-all duration-1000"
+                                            style={{ width: `${aiData.probabilidade_fora}%` }}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* 2. Cartão de Prognóstico & Placar */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-purple-950/40 to-slate-950 border border-purple-500/30 flex flex-col justify-between">
+                                        <span className="text-[10px] font-black uppercase text-purple-300 tracking-wider flex items-center gap-1.5">
+                                            <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                                            <span>Vencedor Previsto</span>
+                                        </span>
+                                        <div className="my-2">
+                                            <span className="text-xl font-black text-white block">
+                                                {aiData.vencedor_previsto_nome}
+                                            </span>
+                                            <span className="text-xs font-bold text-purple-400">
+                                                Sigla: {aiData.vencedor_previsto_sigla}
+                                            </span>
+                                        </div>
+                                        <span className="text-[10px] font-bold text-slate-400">
+                                            Confiança: <span className="text-emerald-400 font-black">{aiData.confianca}</span>
+                                        </span>
+                                    </div>
+
+                                    <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col justify-between">
+                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+                                            <Target className="w-3.5 h-3.5 text-blue-400" />
+                                            <span>Placar Estimado</span>
+                                        </span>
+                                        <span className="text-2xl font-black font-mono text-emerald-400 my-2">
+                                            {aiData.placar_previsto}
+                                        </span>
+                                        <span className="text-[10px] text-slate-500">
+                                            Projeção calculada com base no ritmo e médias estatísticas.
+                                        </span>
+                                    </div>
+
+                                    <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col justify-between">
+                                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+                                            <Zap className="w-3.5 h-3.5 text-amber-400" />
+                                            <span>Visão Rápida</span>
+                                        </span>
+                                        <p className="text-xs text-slate-300 font-medium leading-relaxed my-1">
+                                            {aiData.resumo_rapido}
+                                        </p>
+                                        <span className="text-[9px] text-slate-500 font-mono">
+                                            Modelo: {aiData.source === 'gemini' ? 'Google Gemini 2.5' : 'Modelo Estatístico'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* 3. Fatores-Chave da Partida */}
+                                {aiData.fatores_chave && aiData.fatores_chave.length > 0 && (
+                                    <div className="bg-slate-950/60 rounded-2xl p-5 border border-slate-800/80">
+                                        <h4 className="text-xs font-black uppercase text-white tracking-wider flex items-center gap-2 mb-3">
+                                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                            <span>Chaves do Jogo (Fatores Decisivos)</span>
+                                        </h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                            {aiData.fatores_chave.map((fator, i) => (
+                                                <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 flex items-start space-x-2">
+                                                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-black text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                                                        {i + 1}
+                                                    </span>
+                                                    <span>{fator}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 4. Duelo Individual Chave */}
+                                {aiData.duelo_chave && (
+                                    <div className="bg-slate-950/60 rounded-2xl p-5 border border-slate-800/80 flex flex-col md:flex-row items-center gap-4">
+                                        <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                                            <Flame className="w-6 h-6 text-amber-400" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="text-xs font-black text-amber-400 uppercase tracking-wider mb-1">
+                                                Duelo Chave: {aiData.duelo_chave.jogador_casa} vs {aiData.duelo_chave.jogador_fora}
+                                            </div>
+                                            <p className="text-xs text-slate-300 leading-relaxed">
+                                                {aiData.duelo_chave.analise}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 5. Análise Tática Aprofundada */}
+                                {aiData.analise_tatica && (
+                                    <div className="bg-slate-950/80 rounded-2xl p-6 border border-slate-800">
+                                        <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-2 mb-3">
+                                            <TrendingUp className="w-4 h-4 text-purple-400" />
+                                            <span>Análise Tática Detalhada</span>
+                                        </h4>
+                                        <div className="text-xs sm:text-sm text-slate-200 leading-relaxed whitespace-pre-line space-y-3 font-normal">
+                                            {aiData.analise_tatica}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* VISÃO 6: CRÓNICA & RESUMO PÓS-JOGO (IA GEMINI) */}
+                {viewMode === 'ai-recap' && (
+                    <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 mb-12 relative overflow-hidden">
+                        <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-cyan-600/10 blur-3xl pointer-events-none" />
+
+                        {/* Top Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-800 mb-6 relative z-10">
+                            <div className="flex items-center space-x-3">
+                                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-cyan-600/30 shrink-0">
+                                    <Newspaper className="w-5 h-5 text-white" />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-black text-white flex items-center gap-2">
+                                        <span>Crónica &amp; Resumo Oficial do Jogo</span>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                            Google Gemini
+                                        </span>
+                                    </h2>
+                                    <p className="text-xs text-slate-400">
+                                        História completa da partida, momentos de viragem e destaque do melhor em campo.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => fetchAiData(true)}
+                                disabled={aiLoading}
+                                className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 flex items-center space-x-2 transition disabled:opacity-50"
+                            >
+                                <RotateCw className={`w-3.5 h-3.5 text-cyan-400 ${aiLoading ? 'animate-spin' : ''}`} />
+                                <span>{aiLoading ? 'A redigir resumo...' : 'Atualizar Resumo'}</span>
+                            </button>
+                        </div>
+
+                        {/* Loading State */}
+                        {aiLoading && !aiData && (
+                            <div className="py-16 text-center">
+                                <Sparkles className="w-10 h-10 text-cyan-400 animate-spin mx-auto mb-4" />
+                                <h3 className="text-base font-bold text-white">A gerar a crónica oficial com o Gemini AI...</h3>
+                                <p className="text-xs text-slate-400 mt-1">A analisar lances decisivos, pontuações dos quartos e o MVP.</p>
+                            </div>
+                        )}
+
+                        {/* Error State */}
+                        {aiError && !aiData && (
+                            <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/20 text-center">
+                                <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
+                                <p className="text-sm font-bold text-red-300">{aiError}</p>
+                                <button
+                                    onClick={() => fetchAiData(true)}
+                                    className="mt-4 px-4 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-xs font-bold text-red-200 border border-red-500/30"
+                                >
+                                    Tentar Novamente
+                                </button>
+                            </div>
+                        )}
+
+                        {aiData && (
+                            <div className="space-y-6 relative z-10">
+                                {/* Manchete Principal */}
+                                <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 p-6 rounded-3xl border border-cyan-500/30 shadow-inner">
+                                    <span className="text-[10px] font-black uppercase text-cyan-400 tracking-widest block mb-2">
+                                        MANCHETE DO JOGO
+                                    </span>
+                                    <h3 className="text-xl sm:text-2xl font-black text-white leading-tight">
+                                        "{aiData.manchete}"
+                                    </h3>
+                                </div>
+
+                                {/* MVP & Estatística Decisiva */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {/* MVP */}
+                                    {aiData.mvp && (
+                                        <div className="md:col-span-2 p-5 rounded-2xl bg-slate-950 border border-amber-500/30 relative overflow-hidden flex flex-col justify-between">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider flex items-center gap-1.5">
+                                                    <Award className="w-4 h-4 text-amber-400" />
+                                                    <span>Jogador Mais Valioso (MVP da Partida)</span>
+                                                </span>
+                                                <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold">
+                                                    {aiData.mvp.equipa}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <h4 className="text-xl font-black text-white">
+                                                    {aiData.mvp.nome}
+                                                </h4>
+                                                <span className="text-sm font-mono font-bold text-emerald-400 block mt-0.5">
+                                                    {aiData.mvp.linha_estatistica}
+                                                </span>
+                                                <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+                                                    {aiData.mvp.impacto}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Fator X / Estatística Decisiva */}
+                                    <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col justify-between">
+                                        <span className="text-[10px] font-black uppercase text-cyan-400 tracking-wider flex items-center gap-1.5">
+                                            <Target className="w-4 h-4 text-cyan-400" />
+                                            <span>Estatística Decisiva</span>
+                                        </span>
+                                        <p className="text-sm font-bold text-white leading-relaxed my-2">
+                                            {aiData.estatistica_decisiva}
+                                        </p>
+                                        <span className="text-[10px] text-slate-500">
+                                            O elemento estatístico que selou o desfecho.
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Crónica do Jogo */}
+                                {aiData.cronica && (
+                                    <div className="bg-slate-950/80 rounded-2xl p-6 border border-slate-800">
+                                        <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-2 mb-3">
+                                            <Newspaper className="w-4 h-4 text-cyan-400" />
+                                            <span>Crónica Oficial</span>
+                                        </h4>
+                                        <div className="text-xs sm:text-sm text-slate-200 leading-relaxed whitespace-pre-line space-y-4 font-normal">
+                                            {aiData.cronica}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Momentos Chave */}
+                                {aiData.momentos_chave && aiData.momentos_chave.length > 0 && (
+                                    <div className="bg-slate-950/60 rounded-2xl p-5 border border-slate-800/80">
+                                        <h4 className="text-xs font-black uppercase text-white tracking-wider flex items-center gap-2 mb-3">
+                                            <Clock className="w-4 h-4 text-amber-400" />
+                                            <span>Momentos de Viragem &amp; Lances Decisivos</span>
+                                        </h4>
+                                        <div className="space-y-2">
+                                            {aiData.momentos_chave.map((momento, idx) => (
+                                                <div key={idx} className="p-3 rounded-xl bg-slate-900 border border-slate-800/80 flex items-start space-x-3 text-xs text-slate-300">
+                                                    <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                                                        {idx + 1}
+                                                    </span>
+                                                    <span>{momento}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
